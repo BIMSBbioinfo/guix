@@ -359,8 +359,42 @@ data types.")
                               "Lib/ctypes/test/test_win32.py" ; fails on aarch64
                               "Lib/test/test_fcntl.py")) ; fails on aarch64
                   #t))))
-    (arguments (substitute-keyword-arguments (package-arguments python-2)
-                 ((#:tests? _) #t)))
+    (arguments
+     (substitute-keyword-arguments (package-arguments python-2)
+       ((#:tests? _) #t)
+       ((#:phases phases)
+        `(modify-phases ,phases
+           (add-after 'unpack 'patch-timestamp-for-pyc-files
+             (lambda _
+               ;; We set DETERMINISTIC_BUILD to only override the mtime when
+               ;; building with Guix, lest we break auto-compilation in
+               ;; environments.
+               (setenv "DETERMINISTIC_BUILD" "1")
+               (substitute* "Lib/py_compile.py"
+                 (("source_stats\\['mtime'\\]")
+                  "(1 if 'DETERMINISTIC_BUILD' in os.environ else source_stats['mtime'])"))
+
+               ;; Use deterministic hashes for strings, bytes, and datetime
+               ;; objects.
+               (setenv "PYTHONHASHSEED" "0")
+
+               ;; Reset mtime when validating bytecode header.
+               (substitute* "Lib/importlib/_bootstrap_external.py"
+                 (("source_mtime = int\\(source_stats\\['mtime'\\]\\)")
+                  "source_mtime = 1"))
+               #t))
+           (add-after 'unpack 'disable-timestamp-tests
+             (lambda _
+               (substitute* "Lib/test/test_importlib/source/test_file_loader.py"
+                 (("test_bad_marshal")
+                  "disable_test_bad_marshal")
+                 (("test_no_marshal")
+                  "disable_test_no_marshal")
+                 (("test_non_code_marshal")
+                  "disable_test_non_code_marshal"))
+               #t))
+           (add-before 'check 'allow-non-deterministic-compilation
+             (lambda _ (unsetenv "DETERMINISTIC_BUILD") #t))))))
     (native-search-paths
      (list (search-path-specification
             (variable "PYTHONPATH")
